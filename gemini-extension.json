@@ -1,0 +1,6 @@
+{
+  "name": "trident-loop",
+  "description": "Cross-provider development loop: independent plan review, delegated build, and independent final inspection (Claude, Codex, Kimi, DeepSeek, Qwen).",
+  "version": "0.9.0",
+  "contextFileName": "GEMINI.md"
+}

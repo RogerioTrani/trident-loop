@@ -1,0 +1,15 @@
+{
+  "name": "trident-loop",
+  "owner": {
+    "name": "Rogerio Trani"
+  },
+  "plugins": [
+    {
+      "name": "trident-loop",
+      "description": "Cross-provider development loop: independent plan review, delegated build, and independent final inspection across Claude Code, Codex, Kimi Code, DeepSeek Harness and qwen-code.",
+      "category": "development",
+      "tags": ["plan-review", "cross-provider", "code-review", "claude", "codex", "kimi", "deepseek", "qwen"],
+      "source": "./"
+    }
+  ]
+}

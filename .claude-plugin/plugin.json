@@ -1,0 +1,12 @@
+{
+  "name": "trident-loop",
+  "description": "Cross-provider development loop: an independent provider reviews the plan, the selected builder implements, and another provider inspects the final code. Supports Claude Code, Codex, Kimi Code, DeepSeek Harness and qwen-code.",
+  "version": "0.9.0",
+  "author": {
+    "name": "Rogerio Trani"
+  },
+  "homepage": "https://github.com/YOUR_USER/trident-loop",
+  "repository": "https://github.com/YOUR_USER/trident-loop",
+  "license": "MIT",
+  "keywords": ["claude", "codex", "kimi", "deepseek", "qwen", "plan-review", "cross-provider", "code-review", "skills"]
+}

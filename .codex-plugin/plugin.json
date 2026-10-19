@@ -1,0 +1,13 @@
+{
+  "name": "trident-loop",
+  "version": "0.9.0",
+  "description": "Cross-provider development loop for Codex: an independent provider reviews the plan, the selected builder implements, and another provider inspects the final code.",
+  "author": {
+    "name": "Rogerio Trani"
+  },
+  "homepage": "https://github.com/YOUR_USER/trident-loop",
+  "repository": "https://github.com/YOUR_USER/trident-loop",
+  "license": "MIT",
+  "keywords": ["codex", "claude", "kimi", "deepseek", "qwen", "plan-review", "cross-provider", "skills"],
+  "skills": "./skills/"
+}
