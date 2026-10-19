@@ -1,16 +1,16 @@
 # Changelog
 
-All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
+This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [0.9.0] - 2026-10-19
 
 First public release.
 
 ### Added
-- Provider registry with per-provider boundary profiles for Claude Code, Codex, Kimi Code, DeepSeek Harness (`dsh`) and qwen-code, extending upstream claudex-loop's two providers to five.
-- Role resolution from the pipeline order `claude → codex → kimi → deepseek → qwen`, with recorded deviations and reviewer swaps between rounds.
-- Shared runner (`review`, `build`, `inspect`) that validates structured reviews and binds approvals to the plan's SHA256.
-- Multi-host packaging: Claude Code marketplace, Codex and Kimi plugin manifests, a Gemini/qwen extension manifest, and `install.py`.
-- Test suite driven by fake CLI processes, run in CI on Windows, macOS and Linux.
+- A provider registry with a boundary profile for each of Claude Code, Codex, Kimi Code, DeepSeek Harness (`dsh`) and qwen-code. Upstream claudex-loop supports Claude and Codex.
+- Default roles taken from the pipeline order `claude → codex → kimi → deepseek → qwen`. Deviations and reviewer swaps between rounds are recorded in the log.
+- A shared runner with `review`, `build` and `inspect` modes. It validates structured reviews and ties each approval to the plan's SHA256.
+- Packaging for several hosts: a Claude Code marketplace entry, Codex and Kimi plugin manifests, a Gemini/qwen extension manifest and `install.py`.
+- A test suite that runs against fake CLI processes, in CI on Windows, macOS and Linux.
 
 [0.9.0]: https://github.com/RogerioTrani/trident-loop/releases/tag/v0.9.0

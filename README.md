@@ -2,9 +2,9 @@
 
 [![ci](https://github.com/RogerioTrani/trident-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/RogerioTrani/trident-loop/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Harden a plan with independent cross-provider review, then build it and have a different provider inspect the code.** One skill, five coding-agent CLIs: the conversation you are in owns requirements and coordination; a *different* provider challenges the plan with evidence; the selected builder implements; a fresh session of another provider inspects the final diff.
+trident-loop is a skill for coding-agent CLIs. You write a plan with the agent you are already talking to, a different provider reviews it and has to back each finding with evidence, a builder you choose implements it, and a fresh session of yet another provider inspects the final diff. It works with five CLIs: Claude Code, Codex, Kimi Code, DeepSeek Harness and qwen-code.
 
-Adapted from [chaseai-yt/claudex-loop](https://github.com/chaseai-yt/claudex-loop) (MIT) and extended from two providers (Claude + Codex) to five.
+It is adapted from [chaseai-yt/claudex-loop](https://github.com/chaseai-yt/claudex-loop) (MIT), which supports two providers, Claude and Codex.
 
 ```mermaid
 flowchart LR
@@ -19,9 +19,9 @@ flowchart LR
     I --> H[Present diff and remaining findings]
 ```
 
-## Why cross-provider
+## Why a different provider
 
-The reviewer being a *different* provider is the point: each model family has its own blind spots, and a review only counts when the reviewer could not have written the plan itself. Every run records who planned, reviewed, built and inspected, which model was requested versus observed, and what evidence backed each finding.
+Each model family has its own blind spots, and a review only counts when the reviewer could not have written the plan itself, so the reviewer always comes from another provider. Every run records who planned, reviewed, built and inspected, which model was requested and which one actually answered, and the evidence behind each finding.
 
 ## Provider support
 
@@ -33,48 +33,48 @@ The reviewer being a *different* provider is the point: each model family has it
 | DeepSeek | `dsh` | best-effort¹ | yes | yes | `DSH_PERMISSION_MODE=read-only` sandbox preset | Not live-tested |
 | Qwen | `qwen` | yes | yes | yes | `--safe-mode` + `--exclude-tools` + audited stream | Not live-tested |
 
-¹ dsh has no native skill directory: host it by pointing `AGENTS.md` at the skill (see below), or use DeepSeek as reviewer/builder/inspector only.
+¹ dsh has no native skill directory. To host the loop there, point an `AGENTS.md` at the skill (see below); otherwise use DeepSeek only as reviewer, builder or inspector.
 
-Default roles resolve from the pipeline order **claude → codex → kimi → deepseek → qwen**: the plan reviewer is the first provider that is not the host, the builder defaults to the host, and the inspector is the first provider that is not the builder. The pipeline is a recommendation, not a rule — see *Role dialogue* below.
+Default roles come from the pipeline order claude → codex → kimi → deepseek → qwen. The reviewer is the first provider that is not the host, the builder is the host, and the inspector is the first provider that is not the builder. You can override any of them (see "Role dialogue" below).
 
-Each provider is registered in the runner behind an explicit boundary profile; an unrecognized name fails before anything launches. Adding another CLI means implementing one profile (launch flags, stream parsing, resume semantics) in `skills/trident-loop/scripts/runner.py`.
+The runner registers each provider with an explicit boundary profile, and an unknown provider name fails before anything launches. To add another CLI, implement one profile (launch flags, stream parsing, resume semantics) in `skills/trident-loop/scripts/runner.py`.
 
 ## Install
 
-The repository is a multi-host plugin: the same checkout installs into each CLI through its native mechanism.
+The same checkout installs into each CLI through that CLI's own plugin mechanism.
 
-**Claude Code** (plugin marketplace):
+Claude Code, through the plugin marketplace:
 
 ```
 /plugin marketplace add RogerioTrani/trident-loop
 /plugin install trident-loop@trident-loop
 ```
 
-**Kimi Code**: open `/plugins` → *Custom* → install from a GitHub URL, and pass this repository's URL. Kimi reads `.kimi-plugin/plugin.json`.
+Kimi Code: open `/plugins`, choose *Custom*, pick install from a GitHub URL and paste this repository's URL. Kimi reads `.kimi-plugin/plugin.json`.
 
-**Codex**: clone the repository and copy the skill, or use Codex plugin packaging with `.codex-plugin/plugin.json`:
+Codex: clone the repository and copy the skill, or use Codex plugin packaging with `.codex-plugin/plugin.json`.
 
 ```
 git clone https://github.com/RogerioTrani/trident-loop.git
 python trident-loop/install.py --host codex        # copies into ~/.agents/skills
 ```
 
-**qwen-code**: load the repository as an extension (`gemini-extension.json`, inherited from the Gemini CLI harness), or copy the skill directory manually:
+qwen-code: load the repository as an extension (qwen-code inherits `gemini-extension.json` support from the Gemini CLI), or copy the skill directory yourself.
 
 ```
 python install.py --host qwen --dir ~/.qwen/skills   # adjust to your skills directory
 ```
 
-**DeepSeek Harness (dsh)**: as a *participant* (reviewer/builder/inspector) dsh needs no install — authenticate the CLI and it is selectable with `reviewer=deepseek` / `builder=deepseek`. To *host* the loop in dsh, add an `AGENTS.md` to your project:
+DeepSeek Harness (dsh): to use it as reviewer, builder or inspector, install nothing; authenticate the CLI and select it with `reviewer=deepseek` or `builder=deepseek`. To host the loop in dsh, add an `AGENTS.md` to your project:
 
 ```markdown
 trident-loop: harden plans with independent review before building.
 Read skills/trident-loop/SKILL.md from the trident-loop repository and follow its phases.
 ```
 
-**Any host, manual**: `python install.py --host claude|codex|kimi|qwen [--dir PATH] [--link]`. The default directories for `claude` (`~/.claude/skills`) and `codex` (`~/.agents/skills`) are verified; those for `kimi` and `qwen` are best-effort guesses, so prefer the plugin/extension route there or pass `--dir` explicitly.
+Any host, by hand: `python install.py --host claude|codex|kimi|qwen [--dir PATH] [--link]`. The default directories for `claude` (`~/.claude/skills`) and `codex` (`~/.agents/skills`) are verified. The ones for `kimi` and `qwen` are guesses, so for those use the plugin or extension route, or pass `--dir`.
 
-Every delegated mode needs the other CLIs installed and authenticated; the loop never calls a hosted API directly. Python **3.10+** runs the shared runner; there are no pip dependencies.
+Every provider you delegate to must be installed and signed in. The loop never calls a hosted API itself. The shared runner needs Python 3.10 or newer and has no pip dependencies.
 
 ## Usage
 
@@ -87,7 +87,7 @@ trident this feature, builder=codex, reviewer_model=gpt-6-astra
 trident this tax-calculation module, reviewer=qwen, rounds=8
 ```
 
-Model names such as `gpt-6-astra` are examples; pass whatever model your CLI and account accept.
+`gpt-6-astra` is only an example; pass any model your CLI and account accept.
 
 | Argument | Default | Meaning |
 |---|---|---|
@@ -99,28 +99,32 @@ Model names such as `gpt-6-astra` are examples; pass whatever model your CLI and
 | `rounds` / `MAX_ROUNDS` | `5` | Default round budget; user extension is honored and recorded |
 | `inspect` | `on` | Final independent inspection; `off` is an explicit, logged opt-out |
 
-**Role dialogue.** At each role decision — the round-1 reviewer, a reviewer swap between rounds, the builder, the inspector — the host recommends the pipeline default and asks, unless you have already given a standing instruction ("tax reviews go to qwen", "always follow the pipeline"). Deviations are allowed anywhere and recorded in the log with the reason; they never silently become the new default. A reviewer swap starts a fresh session carrying all prior findings and dispositions, never resets the round count, and the final approval binds to the final reviewer's verdict on the final plan hash.
+### Role dialogue
 
-**What an approval means.** The runner validates a completed CLI turn and a structured review (verdict, evidence-backed findings, coverage, limitations); an empty output file or a session-start event is not approval. Approval records the plan's SHA256 — change the plan and it lapses. `BLOCKED`, failed processes and exhausted budgets are surfaced, never converted to approval. Zero findings is valid and is not proof of exhaustive correctness.
+The host stops to ask at each role decision: the first reviewer, a reviewer swap between rounds, the builder and the inspector. It recommends the pipeline default unless you already gave a standing instruction such as "tax reviews go to qwen" or "always follow the pipeline". You can deviate at any point. The log records each deviation with its reason, and a deviation never becomes the new default on its own. Swapping reviewers starts a fresh session that carries every earlier finding and how it was handled, and the round count keeps going. The final approval is the last reviewer's verdict on the final plan, bound to that plan's hash.
 
-## Development and verification
+### What an approval means
+
+The runner accepts a review only when the CLI turn completed and the output parses as a structured review with a verdict, findings backed by evidence, coverage and limitations. An empty output file or a session-start event does not count. The approval stores the plan's SHA256, so any later edit to the plan voids it. A `BLOCKED` verdict, a failed process or an exhausted round budget is reported to you and never turned into an approval. A review with zero findings is valid, but it does not prove the plan is correct.
+
+## Development
 
 ```
 python -m unittest discover -s skills/trident-loop/scripts -t skills/trident-loop/scripts -v
 ```
 
-The suite drives fake CLI processes — every boundary, audit, resume and failure path is covered without spending model quota. CI runs the suite on Windows, macOS and Linux. Live smoke tests belong in disposable fixtures with an explicit model; see `references/runtime.md` in the skill for each provider's verification status and boundary details.
+The suite runs against fake CLI processes and covers every boundary, audit, resume and failure path without spending model quota. CI runs it on Windows, macOS and Linux. Run live smoke tests only in throwaway fixtures, with an explicit model. Each provider's verification status and boundary details are in `references/runtime.md` inside the skill.
 
 ## History and credits
 
-This repository started as a customization of [claudex-loop](https://github.com/chaseai-yt/claudex-loop) (MIT, © Chase AI) that added Kimi Code as a third provider, then generalized the role model into a provider registry with per-provider boundary profiles and added DeepSeek Harness and qwen-code. The upstream lineage (formerly `grill-me-codex` and `crucible`) is documented in its repository. Portions of the runner and skill text derive from claudex-loop and remain MIT-licensed under the original copyright.
+This repository began as a customization of [claudex-loop](https://github.com/chaseai-yt/claudex-loop) (MIT, © Chase AI) that added Kimi Code as a third provider. Later the role model became a provider registry with a boundary profile per provider, and DeepSeek Harness and qwen-code joined. The upstream repository documents its own history (it was previously `grill-me-codex` and then `crucible`). Parts of the runner and the skill text come from claudex-loop and stay under its MIT license and copyright.
 
-`ADR-FORMAT.md` and `CONTEXT-FORMAT.md` are adapted, via claudex-loop, from [Matt Pocock's skills](https://github.com/mattpocock/skills) (MIT, © Matt Pocock). Upstream's legacy interview skills are not part of this repository.
+`ADR-FORMAT.md` and `CONTEXT-FORMAT.md` are adapted, via claudex-loop, from [Matt Pocock's skills](https://github.com/mattpocock/skills) (MIT, © Matt Pocock). Upstream's legacy interview skills are not included here.
 
 ## Security
 
-Review and inspection run read-only, but **build mode lets the builder edit files and run commands without per-action approval** (Codex with `approval_policy="never"`, Qwen with `--approval-mode yolo`). trident-loop adds no isolation beyond each CLI's own boundary. Build in a repository you can reset, without production credentials in the environment. See [SECURITY.md](SECURITY.md) for the full trust model and how to report a vulnerability.
+Review and inspection are read-only. In build mode the builder can edit files and run commands without asking for each action: Codex runs with `approval_policy="never"` and Qwen with `--approval-mode yolo`. trident-loop adds no isolation of its own on top of each CLI's boundary, so build in a repository you can reset and keep production credentials out of the environment. [SECURITY.md](SECURITY.md) covers the trust model and how to report a vulnerability.
 
 ## Disclaimer
 
-Not affiliated with, endorsed by, or sponsored by Anthropic, OpenAI, Moonshot AI, DeepSeek, Alibaba or the Qwen team. All product names are trademarks of their respective owners. You are responsible for the CLIs you install and the code you run; review each provider's permission boundary in `references/runtime.md` before delegating work.
+This project is not affiliated with, endorsed by or sponsored by Anthropic, OpenAI, Moonshot AI, DeepSeek, Alibaba or the Qwen team. Product names are trademarks of their owners. You are responsible for the CLIs you install and the code you run, so read each provider's permission boundary in `references/runtime.md` before you delegate work.
