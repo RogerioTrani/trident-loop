@@ -3,3 +3,16 @@ __pycache__/
 dsh-output/
 PLAN.md
 PLAN-REVIEW-LOG.md
+
+# Local environment and editor/OS files
+.env
+.env.*
+.venv/
+venv/
+*.log
+*.egg-info/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

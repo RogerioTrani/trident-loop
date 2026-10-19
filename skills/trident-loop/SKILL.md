@@ -39,7 +39,7 @@ If the user supplies `codex_cli` or `claude_cli`, map the selected provider's ex
 | `LOG_FILE` / `log` | `PLAN-REVIEW-LOG.md` | Append-only transcript |
 | `rounds` / `MAX_ROUNDS` | `5` | Default plan-review round budget; user extension is honored and recorded |
 | `reviewer` | pipeline default | Chosen per round; may change between rounds on user request or standing instruction |
-| `providers` / `PROVIDER_ORDER` | `claude,codex,kimi` | Pipeline order used to resolve default roles; extendable as providers are implemented |
+| `providers` / `PROVIDER_ORDER` | `claude,codex,kimi,deepseek,qwen` | Pipeline order used to resolve default roles |
 | `builder` | host | Provider implementing the plan |
 | `research` | proportionate to task | `none`, `web`, or explicit opt-in `deep` |
 | `mode` | `full` | `full` includes recon/interview; `review` starts from an existing plan |

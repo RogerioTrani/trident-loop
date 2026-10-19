@@ -1,5 +1,7 @@
 # trident-loop
 
+[![ci](https://github.com/RogerioTrani/trident-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/RogerioTrani/trident-loop/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Harden a plan with independent cross-provider review, then build it and have a different provider inspect the code.** One skill, five coding-agent CLIs: the conversation you are in owns requirements and coordination; a *different* provider challenges the plan with evidence; the selected builder implements; a fresh session of another provider inspects the final diff.
 
 Adapted from [chaseai-yt/claudex-loop](https://github.com/chaseai-yt/claudex-loop) (MIT) and extended from two providers (Claude + Codex) to five.
@@ -44,7 +46,7 @@ The repository is a multi-host plugin: the same checkout installs into each CLI 
 **Claude Code** (plugin marketplace):
 
 ```
-/plugin marketplace add YOUR_USER/trident-loop
+/plugin marketplace add RogerioTrani/trident-loop
 /plugin install trident-loop@trident-loop
 ```
 
@@ -53,7 +55,7 @@ The repository is a multi-host plugin: the same checkout installs into each CLI 
 **Codex**: clone the repository and copy the skill, or use Codex plugin packaging with `.codex-plugin/plugin.json`:
 
 ```
-git clone https://github.com/YOUR_USER/trident-loop.git
+git clone https://github.com/RogerioTrani/trident-loop.git
 python trident-loop/install.py --host codex        # copies into ~/.agents/skills
 ```
 
@@ -70,7 +72,7 @@ trident-loop: harden plans with independent review before building.
 Read skills/trident-loop/SKILL.md from the trident-loop repository and follow its phases.
 ```
 
-**Any host, manual**: `python install.py --host claude|codex|kimi|qwen [--dir PATH] [--link]`.
+**Any host, manual**: `python install.py --host claude|codex|kimi|qwen [--dir PATH] [--link]`. The default directories for `claude` (`~/.claude/skills`) and `codex` (`~/.agents/skills`) are verified; those for `kimi` and `qwen` are best-effort guesses, so prefer the plugin/extension route there or pass `--dir` explicitly.
 
 Every delegated mode needs the other CLIs installed and authenticated; the loop never calls a hosted API directly. Python **3.10+** runs the shared runner; there are no pip dependencies.
 
@@ -84,6 +86,8 @@ trident this plan, mode=review, plan=docs/migration.md, rounds=3
 trident this feature, builder=codex, reviewer_model=gpt-6-astra
 trident this tax-calculation module, reviewer=qwen, rounds=8
 ```
+
+Model names such as `gpt-6-astra` are examples; pass whatever model your CLI and account accept.
 
 | Argument | Default | Meaning |
 |---|---|---|
@@ -111,7 +115,11 @@ The suite drives fake CLI processes — every boundary, audit, resume and failur
 
 This repository started as a customization of [claudex-loop](https://github.com/chaseai-yt/claudex-loop) (MIT, © Chase AI) that added Kimi Code as a third provider, then generalized the role model into a provider registry with per-provider boundary profiles and added DeepSeek Harness and qwen-code. The upstream lineage (formerly `grill-me-codex` and `crucible`) is documented in its repository. Portions of the runner and skill text derive from claudex-loop and remain MIT-licensed under the original copyright.
 
-Legacy interview skills in upstream (© Matt Pocock, MIT) are not part of this repository.
+`ADR-FORMAT.md` and `CONTEXT-FORMAT.md` are adapted, via claudex-loop, from [Matt Pocock's skills](https://github.com/mattpocock/skills) (MIT, © Matt Pocock). Upstream's legacy interview skills are not part of this repository.
+
+## Security
+
+Review and inspection run read-only, but **build mode lets the builder edit files and run commands without per-action approval** (Codex with `approval_policy="never"`, Qwen with `--approval-mode yolo`). trident-loop adds no isolation beyond each CLI's own boundary. Build in a repository you can reset, without production credentials in the environment. See [SECURITY.md](SECURITY.md) for the full trust model and how to report a vulnerability.
 
 ## Disclaimer
 

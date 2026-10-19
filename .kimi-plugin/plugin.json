@@ -5,8 +5,8 @@
   "author": {
     "name": "Rogerio Trani"
   },
-  "homepage": "https://github.com/YOUR_USER/trident-loop",
-  "repository": "https://github.com/YOUR_USER/trident-loop",
+  "homepage": "https://github.com/RogerioTrani/trident-loop",
+  "repository": "https://github.com/RogerioTrani/trident-loop",
   "license": "MIT",
   "keywords": ["kimi", "claude", "codex", "deepseek", "qwen", "plan-review", "cross-provider", "skills"],
   "skills": "./skills/"
