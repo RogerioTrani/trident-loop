@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/RogerioTrani/trident-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/RogerioTrani/trident-loop/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-trident-loop is a skill for coding-agent CLIs. You write a plan with the agent you are already talking to, a different provider reviews it and has to back each finding with evidence, a builder you choose implements it, and a fresh session of yet another provider inspects the final diff. It works with six CLIs: Claude Code, Codex, Kimi Code, DeepSeek Harness, qwen-code and OpenCode.
+trident-loop is a skill for coding-agent CLIs. You write a plan with the agent you are already talking to. A different provider reviews it and has to back each finding with evidence, a builder you choose implements it, and a fresh session of another provider inspects the final diff. It works with six CLIs: Claude Code, Codex, Kimi Code, DeepSeek Harness, qwen-code and OpenCode.
 
 It is adapted from [chaseai-yt/claudex-loop](https://github.com/chaseai-yt/claudex-loop) (MIT), which supports two providers, Claude and Codex.
 
@@ -108,7 +108,7 @@ trident this tax-calculation module, reviewer=qwen, rounds=8
 
 ### Role dialogue
 
-The host stops to ask at each role decision: the first reviewer, a reviewer swap between rounds, the builder and the inspector. It recommends the pipeline default unless you already gave a standing instruction such as "tax reviews go to qwen" or "always follow the pipeline". You can deviate at any point. The log records each deviation with its reason, and a deviation never becomes the new default on its own. Swapping reviewers starts a fresh session that carries every earlier finding and how it was handled, and the round count keeps going. The final approval is the last reviewer's verdict on the final plan, bound to that plan's hash.
+The host stops to ask at each role decision: the first reviewer, a reviewer swap between rounds, the builder and the inspector. It recommends the pipeline default unless you already gave a standing instruction such as "tax reviews go to qwen" or "always follow the pipeline". You can deviate at any point, and the log records each deviation with its reason; a deviation never becomes the new default on its own. Swapping reviewers starts a fresh session that carries every earlier finding and how it was handled, and the round count keeps going. The final approval is the last reviewer's verdict on the final plan, bound to that plan's hash.
 
 ### What an approval means
 
