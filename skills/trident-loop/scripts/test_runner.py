@@ -232,6 +232,95 @@ else:
 '''
 
 
+FAKE_OPENCODE = r'''
+import json, os, sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "--version" in args:
+    print(os.environ.get("FAKE_OPENCODE_VERSION", "1.18.29-fake"))
+    sys.exit(0)
+
+out = os.environ.get("FAKE_OPENCODE_ARGV_OUT")
+if out:
+    Path(out).write_text(json.dumps(args), encoding="utf-8")
+
+mode = os.environ.get("FAKE_OPENCODE_MODE", "ok_review")
+if mode == "fail":
+    print("boom", file=sys.stderr)
+    sys.exit(1)
+
+prompt = sys.stdin.read()
+assert "PLAN SHA256" in prompt, "reviewer did not receive the runner prompt"
+
+REVIEW = json.dumps({"verdict": "APPROVED", "summary": "ok", "findings": [],
+                     "coverage": ["PLAN.md"], "limitations": []})
+SESSION = args[args.index("--session") + 1] if "--session" in args else "ses_fake0123456789abcd"
+if mode == "wrong_session":
+    SESSION = "ses_other0123456789abcd"
+
+def emit(event):
+    print(json.dumps(event))
+
+def step_start():
+    return {"type": "step_start", "timestamp": 1, "sessionID": SESSION,
+            "part": {"id": "prt_0", "sessionID": SESSION, "messageID": "msg_1", "type": "step-start"}}
+
+def step_finish():
+    return {"type": "step_finish", "timestamp": 3, "sessionID": SESSION,
+            "part": {"id": "prt_9", "sessionID": SESSION, "messageID": "msg_1", "type": "step-finish",
+                     "reason": "stop", "cost": 0.01, "tokens": {"input": 10, "output": 5}}}
+
+def tool_event(name):
+    return {"type": "tool_use", "timestamp": 2, "sessionID": SESSION,
+            "part": {"partID": "prt_2", "sessionID": SESSION, "messageID": "msg_1", "type": "tool",
+                     "id": "tool_1", "tool": name,
+                     "state": {"status": "completed", "input": {}, "output": "",
+                               "time": {"start": 2, "end": 2}}}}
+
+def text_event(delta):
+    return {"type": "text", "timestamp": 2, "sessionID": SESSION,
+            "part": {"id": "prt_3", "sessionID": SESSION, "messageID": "msg_1", "type": "text",
+                     "text": delta, "time": {"start": 2, "end": 3}}}
+
+if mode in ("ok_review", "ok_review_fenced", "denied_tool", "no_text", "wrong_session"):
+    emit(step_start())
+    if mode == "denied_tool":
+        emit(tool_event("edit"))
+    else:
+        emit(tool_event("read"))
+    if mode != "no_text":
+        body = ("```json\n" + REVIEW + "\n```") if mode == "ok_review_fenced" else REVIEW
+        # Text arrives as growing deltas, like the real CLI; reconstruction must join them.
+        half = len(body) // 2
+        emit(text_event(body[:half]))
+        emit(text_event(body[half:]))
+    emit(step_finish())
+elif mode == "ok_build":
+    emit(step_start())
+    emit(tool_event("edit"))
+    emit(text_event("Report: wrote the file. Proof not run by builder."))
+    emit(step_finish())
+elif mode == "error_event":
+    emit(step_start())
+    emit({"type": "error", "timestamp": 2, "sessionID": SESSION,
+          "error": {"name": "UnknownError", "data": {"message": "provider exploded"}}})
+elif mode == "no_session":
+    emit({"type": "text", "timestamp": 2,
+          "part": {"id": "prt_3", "messageID": "msg_1", "type": "text", "text": REVIEW,
+                   "time": {"start": 2, "end": 3}}})
+    emit({"type": "step_finish", "timestamp": 3,
+          "part": {"id": "prt_9", "messageID": "msg_1", "type": "step-finish"}})
+elif mode == "no_step":
+    emit(text_event(REVIEW))
+elif mode == "not_json":
+    print("this is not json")
+    sys.exit(0)
+else:
+    raise SystemExit("unknown fake mode " + mode)
+'''
+
+
 class KimiHarness(unittest.TestCase):
     """Creates a temp repo, a Kimi config, and the fake CLI. Tests choose the fake mode per run."""
 
@@ -734,7 +823,6 @@ class DeepSeekBuildTests(DeepSeekHarness):
 
 class QwenHarness(unittest.TestCase):
     """Creates a temp repo and a fake qwen CLI. Tests choose the fake mode per run."""
-
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="trident-tests-"))
         self.repo = self.tmp / "repo"
@@ -860,6 +948,184 @@ class QwenBuildTests(QwenHarness):
         self.assertIn("Report:", record["response"])
 
 
+class OpenCodeHarness(unittest.TestCase):
+    """Creates a temp repo and a fake opencode CLI. Tests choose the fake mode per run."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="trident-tests-"))
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        (self.repo / "PLAN.md").write_text(PLAN, encoding="utf-8")
+        self.fake = self.tmp / "fake_opencode.py"
+        self.fake.write_text(FAKE_OPENCODE, encoding="utf-8")
+        self.argv_out = self.tmp / "opencode-argv.json"
+        self.artifacts = self.tmp / "artifacts"
+        env = mock.patch.dict(os.environ, {
+            "FAKE_OPENCODE_ARGV_OUT": str(self.argv_out),
+            "FAKE_OPENCODE_MODE": "ok_review",
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        patcher = mock.patch.object(runner, "cli_prefix",
+                                    lambda provider, override=None: [sys.executable, str(self.fake)])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_cli(self, *extra: str, mode: str = "ok_review"):
+        os.environ["FAKE_OPENCODE_MODE"] = mode
+        argv = [*extra, "--repo", str(self.repo), "--plan", "PLAN.md",
+                "--artifacts", str(self.artifacts)]
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = runner.main(argv)
+        text = out.getvalue()
+        if "\n{\n" in text:
+            record = json.loads("{\n" + text.split("\n{\n")[-1])  # launch notice + record
+        elif text.strip().startswith("{"):
+            record = json.loads(text)  # failure before launch: record only, no notice line
+        else:
+            record = None
+        return code, record, err.getvalue()
+
+    def fake_argv(self) -> list:
+        return json.loads(self.argv_out.read_text(encoding="utf-8"))
+
+
+class OpenCodeReviewTests(OpenCodeHarness):
+    def test_review_records_verdict_boundary_and_argv(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["response"]["verdict"], "APPROVED")
+        self.assertEqual(record["session_id"], "ses_fake0123456789abcd")
+        self.assertEqual(record["opencode"], {"agent": "plan", "auto": False, "pure": True,
+                                              "denied_tools": list(runner.OPENCODE_DENIED_TOOLS)})
+        self.assertEqual(record["usage"], {"tokens": {"input": 10, "output": 5}, "cost": 0.01})
+        self.assertEqual(record["tool_calls"], {"read": 1})
+        argv = self.fake_argv()
+        self.assertEqual(argv[:2], ["run", "--format"])
+        self.assertIn("json", argv)
+        self.assertIn("--pure", argv)
+        self.assertEqual(argv[argv.index("--agent") + 1], "plan")
+        self.assertNotIn("--auto", argv)
+        self.assertNotIn("--session", argv)
+
+    def test_text_deltas_are_reconstructed_in_order(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(record["response"]["summary"], "ok")
+
+    def test_fenced_json_is_accepted(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         mode="ok_review_fenced")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(record["response"]["verdict"], "APPROVED")
+
+    def test_model_and_effort_flags_are_passed_through(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         "--model", "anthropic/claude-fable-5-1", "--effort", "high")
+        self.assertEqual(code, 0, err)
+        argv = self.fake_argv()
+        self.assertEqual(argv[argv.index("--model") + 1], "anthropic/claude-fable-5-1")
+        self.assertEqual(argv[argv.index("--variant") + 1], "high")
+
+    def test_denied_tool_fails_but_keeps_the_audit(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         mode="denied_tool")
+        self.assertEqual(code, 1)
+        self.assertIn("excludes", record["error"])
+        self.assertEqual(record["tool_denials"], ["edit"])
+        self.assertNotIn("response", record, "a run that escaped the boundary must not produce a verdict")
+
+    def test_error_event_fails(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         mode="error_event")
+        self.assertEqual(code, 1)
+        self.assertIn("error event", record["error"])
+
+    def test_missing_session_fails(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         mode="no_session")
+        self.assertEqual(code, 1)
+        self.assertIn("session id", record["error"])
+
+    def test_missing_step_fails(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         mode="no_step")
+        self.assertEqual(code, 1)
+        self.assertIn("no completed step", record["error"])
+
+    def test_non_json_stdout_fails(self):
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         mode="not_json")
+        self.assertEqual(code, 1)
+        self.assertIn("non-JSON line", record["error"])
+
+    def test_old_cli_version_is_refused_before_launch(self):
+        self.argv_out.unlink(missing_ok=True)
+        os.environ["FAKE_OPENCODE_VERSION"] = "1.17.9-fake"
+        self.addCleanup(os.environ.pop, "FAKE_OPENCODE_VERSION", None)
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode")
+        self.assertEqual(code, 1)
+        self.assertIn("older than the documented", record["error"])
+        self.assertFalse(self.argv_out.exists(), "CLI must not launch for an undocumented version")
+
+    def test_resume_continues_the_same_session(self):
+        code, first, err = self.run_cli("review", "--host", "claude", "--provider", "opencode")
+        self.assertEqual(code, 0, err)
+        prior = self.tmp / "prior.json"
+        prior.write_text(json.dumps(first), encoding="utf-8")
+        code, second, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         "--resume", str(prior))
+        self.assertEqual(code, 0, err)
+        argv = self.fake_argv()
+        self.assertEqual(argv[argv.index("--session") + 1], first["session_id"])
+        self.assertEqual(second["session_id"], first["session_id"])
+
+    def test_different_session_is_refused(self):
+        code, first, err = self.run_cli("review", "--host", "claude", "--provider", "opencode")
+        self.assertEqual(code, 0, err)
+        prior = self.tmp / "prior.json"
+        prior.write_text(json.dumps(first), encoding="utf-8")
+        code, record, err = self.run_cli("review", "--host", "claude", "--provider", "opencode",
+                                         "--resume", str(prior), mode="wrong_session")
+        self.assertEqual(code, 1)
+        self.assertIn("different session", record["error"])
+
+
+class OpenCodeBuildTests(OpenCodeHarness):
+    def _commit_repo(self):
+        import subprocess
+        for cmd in (["git", "init", "-q"], ["git", "add", "."],
+                    ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]):
+            subprocess.run(cmd, cwd=self.repo, check=True, capture_output=True)
+
+    def test_build_uses_build_agent_with_auto(self):
+        self._commit_repo()
+        code, record, err = self.run_cli("build", "--host", "claude", "--builder", "opencode",
+                                         "--unreviewed-spec", "--proof", "echo ok", mode="ok_build")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(record["opencode"], {"agent": "build", "auto": True, "pure": True})
+        argv = self.fake_argv()
+        self.assertEqual(argv[argv.index("--agent") + 1], "build")
+        self.assertIn("--auto", argv)
+        self.assertIn("edit", record["tool_calls"], "builds are supposed to write")
+        self.assertIn("Report:", record["response"])
+
+
+class CliPrefixTests(unittest.TestCase):
+    @unittest.skipIf(os.name != "nt", "npm .cmd shim resolution is Windows-specific")
+    def test_npm_entry_native_exe_is_launched_directly(self):
+        """opencode's npm package ships a bun-compiled opencode.exe next to the .cmd shim."""
+        tmp = Path(tempfile.mkdtemp(prefix="trident-argv-"))
+        exe = tmp / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("", encoding="utf-8")
+        (tmp / "opencode.cmd").write_text("@echo off\r\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"PATH": str(tmp)}):
+            self.assertEqual(runner.cli_prefix("opencode"), [str(exe)])
+
+
 class ClaudeCodexCompatibilityTests(unittest.TestCase):
     """Pins the argv the original runner produced for Claude and Codex."""
 
@@ -927,12 +1193,17 @@ class RoleTests(unittest.TestCase):
     def test_qwen_roles(self):
         roles = runner.resolve_roles("qwen")
         self.assertEqual(roles["reviewer"], "claude")
-        self.assertEqual(roles["pipeline_order"][-1], "qwen")
+        self.assertEqual(roles["pipeline_order"][-2], "qwen")
 
     def test_deepseek_roles(self):
         roles = runner.resolve_roles("deepseek")
         self.assertEqual(roles["reviewer"], "claude")
-        self.assertEqual(roles["pipeline_order"][-2], "deepseek")
+        self.assertEqual(roles["pipeline_order"][-3], "deepseek")
+
+    def test_opencode_roles(self):
+        roles = runner.resolve_roles("opencode")
+        self.assertEqual(roles["reviewer"], "claude")
+        self.assertEqual(roles["pipeline_order"][-1], "opencode")
 
     def test_pipeline_order_needs_another_provider(self):
         with self.assertRaises(runner.RunError):

@@ -1,6 +1,6 @@
 ---
 name: trident-loop
-description: "Harden a plan with independent cross-provider review (Claude, Codex, Kimi, DeepSeek, Qwen), then optionally build and cross-inspect it. Start in any supported host CLI: the host plans and another provider reviews. Use for trident this plan, trident-loop, or trident this feature; not for trivial edits."
+description: "Harden a plan with independent cross-provider review (Claude, Codex, Kimi, DeepSeek, Qwen, OpenCode), then optionally build and cross-inspect it. Start in any supported host CLI: the host plans and another provider reviews. Use for trident this plan, trident-loop, or trident this feature; not for trivial edits."
 ---
 
 # Trident Loop
@@ -11,7 +11,7 @@ The current conversation owns requirements, planning and coordination. The other
 
 Identify the actual host from your runtime, not PATH, installed skills, model-name guesses, or the repository. Several CLIs may be installed. Any registered provider can be the host: use `host=claude` in Claude Code, `host=codex` in Codex, `host=kimi` in Kimi Code, and the matching runtime identity for any further provider. If the runtime identity is unavailable, ask which host the user is using once.
 
-**Provider registry and pipeline order.** The default pipeline order is the explicit list `claude, codex, kimi, deepseek, qwen`. A provider joins the end of the list once its runner boundary is implemented, and the order can be changed per run with `providers=` / `PROVIDER_ORDER`. Resolve every default role from this order:
+**Provider registry and pipeline order.** The default pipeline order is the explicit list `claude, codex, kimi, deepseek, qwen, opencode`. A provider joins the end of the list once its runner boundary is implemented, and the order can be changed per run with `providers=` / `PROVIDER_ORDER`. Resolve every default role from this order:
 
 - Default plan reviewer: the first provider in the pipeline order that is not the host.
 - Default builder: the host. The host remains coordinator even when another provider builds.
@@ -27,6 +27,8 @@ Honor explicit `reviewer=`, `builder=` and `inspector=` with any registered prov
 
 Model selection is independent of provider roles. Preserve the host's selected model. Review/build CLI calls inherit their own configuration unless `reviewer_model`, `builder_model`, or `inspector_model` is supplied; map these to the runner's `--model` for that invocation. Apply an explicit `*_effort` similarly. Fable 5.1, GPT-6 Astra and Kimi K3 (`kimi-code/k3-256k`) are suitable explicit choices, not mandatory pins. A model in the host UI does not prove which model a separate CLI will use. Report requested and observed model information separately; report an unresolved CLI default honestly. For Kimi, the stream exposes no observed model, so the record keeps the requested alias and marks the observed model unknown. Never silently fall back to another model/provider on a failure.
 
+**OpenCode roles.** OpenCode (`opencode`) runs review/inspect under its built-in `plan` agent (writes and bash are auto-rejected headless) and builds under the `build` agent with `--auto`, both recorded in the result. Read [the OpenCode notes](references/runtime.md#opencode) before choosing it. Pass models in `provider/model` form and effort via `*_effort`, which maps to opencode's `--variant`; the runner requires CLI 1.18.0 or newer and refuses older ones.
+
 Read [the runtime reference](references/runtime.md) before launching a CLI. Resolve its runner relative to this installed SKILL.md, never relative to the project being reviewed. Use absolute paths when launching it.
 
 If the user supplies `codex_cli` or `claude_cli`, map the selected provider's executable path to `--cli`. A host app can have a newer working binary than the CLI on PATH; verify the path and version without silently changing global installation or configuration.
@@ -39,7 +41,7 @@ If the user supplies `codex_cli` or `claude_cli`, map the selected provider's ex
 | `LOG_FILE` / `log` | `PLAN-REVIEW-LOG.md` | Append-only transcript |
 | `rounds` / `MAX_ROUNDS` | `5` | Default plan-review round budget; user extension is honored and recorded |
 | `reviewer` | pipeline default | Chosen per round; may change between rounds on user request or standing instruction |
-| `providers` / `PROVIDER_ORDER` | `claude,codex,kimi,deepseek,qwen` | Pipeline order used to resolve default roles |
+| `providers` / `PROVIDER_ORDER` | `claude,codex,kimi,deepseek,qwen,opencode` | Pipeline order used to resolve default roles |
 | `builder` | host | Provider implementing the plan |
 | `research` | proportionate to task | `none`, `web`, or explicit opt-in `deep` |
 | `mode` | `full` | `full` includes recon/interview; `review` starts from an existing plan |

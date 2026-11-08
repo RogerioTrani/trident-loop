@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/RogerioTrani/trident-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/RogerioTrani/trident-loop/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-trident-loop is a skill for coding-agent CLIs. You write a plan with the agent you are already talking to, a different provider reviews it and has to back each finding with evidence, a builder you choose implements it, and a fresh session of yet another provider inspects the final diff. It works with five CLIs: Claude Code, Codex, Kimi Code, DeepSeek Harness and qwen-code.
+trident-loop is a skill for coding-agent CLIs. You write a plan with the agent you are already talking to, a different provider reviews it and has to back each finding with evidence, a builder you choose implements it, and a fresh session of yet another provider inspects the final diff. It works with six CLIs: Claude Code, Codex, Kimi Code, DeepSeek Harness, qwen-code and OpenCode.
 
 It is adapted from [chaseai-yt/claudex-loop](https://github.com/chaseai-yt/claudex-loop) (MIT), which supports two providers, Claude and Codex.
 
@@ -32,10 +32,11 @@ Each model family has its own blind spots, and a review only counts when the rev
 | Kimi | `kimi` | yes | yes | yes | agent-file allowlist + audited stream + path scope | CLI verified; review path not live-tested |
 | DeepSeek | `dsh` | best-effort¹ | yes | yes | `DSH_PERMISSION_MODE=read-only` sandbox preset | Not live-tested |
 | Qwen | `qwen` | yes | yes | yes | `--safe-mode` + `--exclude-tools` + audited stream | Not live-tested |
+| OpenCode | `opencode` | yes | yes | yes | `plan` agent (asks auto-reject) + audited stream | CLI verified; review path not live-tested |
 
 ¹ dsh has no native skill directory. To host the loop there, point an `AGENTS.md` at the skill (see below); otherwise use DeepSeek only as reviewer, builder or inspector.
 
-Default roles come from the pipeline order claude → codex → kimi → deepseek → qwen. The reviewer is the first provider that is not the host, the builder is the host, and the inspector is the first provider that is not the builder. You can override any of them (see "Role dialogue" below).
+Default roles come from the pipeline order claude → codex → kimi → deepseek → qwen → opencode. The reviewer is the first provider that is not the host, the builder is the host, and the inspector is the first provider that is not the builder. You can override any of them (see "Role dialogue" below).
 
 The runner registers each provider with an explicit boundary profile, and an unknown provider name fails before anything launches. To add another CLI, implement one profile (launch flags, stream parsing, resume semantics) in `skills/trident-loop/scripts/runner.py`.
 
@@ -72,7 +73,13 @@ trident-loop: harden plans with independent review before building.
 Read skills/trident-loop/SKILL.md from the trident-loop repository and follow its phases.
 ```
 
-Any host, by hand: `python install.py --host claude|codex|kimi|qwen [--dir PATH] [--link]`. The default directories for `claude` (`~/.claude/skills`) and `codex` (`~/.agents/skills`) are verified. The ones for `kimi` and `qwen` are guesses, so for those use the plugin or extension route, or pass `--dir`.
+OpenCode: install the skill into a directory opencode searches (`.opencode/skills`, `~/.config/opencode/skills`, or the Claude/agent-compatible skills directories):
+
+```
+python install.py --host opencode        # copies into ~/.config/opencode/skills
+```
+
+Any host, by hand: `python install.py --host claude|codex|kimi|qwen|opencode [--dir PATH] [--link]`. The default directories for `claude` (`~/.claude/skills`) and `codex` (`~/.agents/skills`) are verified. The ones for `kimi`, `qwen` and `opencode` are guesses, so for those use the plugin or extension route, or pass `--dir`.
 
 Every provider you delegate to must be installed and signed in. The loop never calls a hosted API itself. The shared runner needs Python 3.10 or newer and has no pip dependencies.
 
@@ -95,7 +102,7 @@ trident this tax-calculation module, reviewer=qwen, rounds=8
 | `plan` / `log` | `PLAN.md` / `PLAN-REVIEW-LOG.md` | Plan path and append-only decision log |
 | `builder` | host | Provider implementing the plan |
 | `reviewer` | pipeline default | Chosen per round; swappable between rounds |
-| `providers` / `PROVIDER_ORDER` | `claude,codex,kimi,deepseek,qwen` | Pipeline used to resolve default roles |
+| `providers` / `PROVIDER_ORDER` | `claude,codex,kimi,deepseek,qwen,opencode` | Pipeline used to resolve default roles |
 | `rounds` / `MAX_ROUNDS` | `5` | Default round budget; user extension is honored and recorded |
 | `inspect` | `on` | Final independent inspection; `off` is an explicit, logged opt-out |
 
@@ -123,8 +130,8 @@ This repository began as a customization of [claudex-loop](https://github.com/ch
 
 ## Security
 
-Review and inspection are read-only. In build mode the builder can edit files and run commands without asking for each action: Codex runs with `approval_policy="never"` and Qwen with `--approval-mode yolo`. trident-loop adds no isolation of its own on top of each CLI's boundary, so build in a repository you can reset and keep production credentials out of the environment. [SECURITY.md](SECURITY.md) covers the trust model and how to report a vulnerability.
+Review and inspection are read-only. In build mode the builder can edit files and run commands without asking for each action: Codex runs with `approval_policy="never"`, Qwen with `--approval-mode yolo` and OpenCode with `--auto`. trident-loop adds no isolation of its own on top of each CLI's boundary, so build in a repository you can reset and keep production credentials out of the environment. [SECURITY.md](SECURITY.md) covers the trust model and how to report a vulnerability.
 
 ## Disclaimer
 
-This project is not affiliated with, endorsed by or sponsored by Anthropic, OpenAI, Moonshot AI, DeepSeek, Alibaba or the Qwen team. Product names are trademarks of their owners. You are responsible for the CLIs you install and the code you run, so read each provider's permission boundary in `references/runtime.md` before you delegate work.
+This project is not affiliated with, endorsed by or sponsored by Anthropic, OpenAI, Moonshot AI, DeepSeek, Alibaba, the Qwen team or the OpenCode project. Product names are trademarks of their owners. You are responsible for the CLIs you install and the code you run, so read each provider's permission boundary in `references/runtime.md` before you delegate work.

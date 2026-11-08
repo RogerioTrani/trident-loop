@@ -22,7 +22,7 @@ import uuid
 # list only after its boundary profile lands in PROFILES; a registered CLI
 # without a profile fails fast instead of falling back to another provider's
 # launch path.
-DEFAULT_PROVIDER_ORDER = ("claude", "codex", "kimi", "deepseek", "qwen")
+DEFAULT_PROVIDER_ORDER = ("claude", "codex", "kimi", "deepseek", "qwen", "opencode")
 # Kimi has no per-call flags for effort, permission mode or structured output,
 # so the review/inspection tool surface is enforced by an agent-file allowlist
 # and every tool call is audited from the stream-json transcript.
@@ -38,6 +38,12 @@ KIMI_DENIED_TOOLS = ("Agent", "Skill", "WebSearch", "FetchURL", "CronCreate", "C
 # list, so a failed exclusion is a refused run, not a silent escape.
 QWEN_DENIED_TOOLS = ("shell", "write", "edit", "web_fetch", "webfetch", "web_search",
                      "websearch", "memory", "delegate", "spawn_agent")
+# opencode review/inspect: the run uses the built-in "plan" agent (writes and
+# bash are "ask", and a non-interactive run auto-rejects asks, failing closed);
+# the runner also audits every tool_use name in the --format json stream against
+# this deny list, so a weakened agent config is a refused run, not a silent escape.
+OPENCODE_DENIED_TOOLS = ("bash", "write", "edit", "patch", "webfetch",
+                         "task", "kill", "skill")
 REVIEW_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -129,9 +135,13 @@ def cli_prefix(provider: str, override: str | None = None) -> list[str]:
     if os.name == "nt" and path.suffix.lower() in (".cmd", ".bat", ".ps1"):
         npm_entry = provider_profile(provider).get("npm_entry")
         entry = path.parent / "node_modules" / npm_entry if npm_entry else None
-        node = shutil.which("node")
-        if node and entry and entry.is_file():
-            return [node, str(entry)]
+        if entry and entry.is_file():
+            # A bun-compiled native launcher (e.g. opencode.exe) needs no node.
+            if entry.suffix.lower() == ".exe":
+                return [str(entry)]
+            node = shutil.which("node")
+            if node:
+                return [node, str(entry)]
         raise RunError(f"Cannot safely launch {path}. Put the native CLI executable on PATH.")
     return [str(path)]
 
@@ -813,6 +823,111 @@ def kimi_preflight(model, effort, mode: str, accept_permission: bool) -> dict:
             "tool_allowlist": list(KIMI_BUILD_TOOLS if mode == "build" else KIMI_REVIEW_TOOLS)}
 
 
+def _opencode_info(mode: str) -> dict:
+    """Record the boundary choices applied for this opencode run."""
+    if mode == "build":
+        return {"agent": "build", "auto": True, "pure": True}
+    return {"agent": "plan", "auto": False, "pure": True,
+            "denied_tools": list(OPENCODE_DENIED_TOOLS)}
+
+
+def _opencode_command(mode: str, run_dir: Path, model=None, effort=None, session=None) -> list:
+    # Headless surface verified on opencode 1.18.29: `run` reads the prompt from
+    # stdin (an empty message is refused), `--format json` streams NDJSON events
+    # carrying the top-level session id, and `-s` continues a session.
+    # Review/inspect run under the built-in "plan" agent, whose writes and bash
+    # are "ask" and therefore auto-rejected without --auto; builds run the
+    # "build" agent with --auto, the CLI's own auto-approval switch (recorded).
+    args = ["run", "--format", "json", "--pure"]
+    args += (["--agent", "build", "--auto"] if mode == "build" else
+             ["--agent", "plan"])
+    if session:
+        args += ["--session", session]
+    if model:
+        args += ["--model", model]
+    if effort:
+        # --variant is the provider-specific reasoning effort knob.
+        args += ["--variant", effort]
+    return args
+
+
+class OpenCodeParseError(RunError):
+    """A refused opencode run still keeps its tool audit in the record."""
+
+    def __init__(self, message: str, partial: dict):
+        super().__init__(message)
+        self.partial = partial
+
+
+def _parse_opencode_result(mode: str, run_dir: Path, expected_session=None,
+                           repo: str = "", roots: list[str] | None = None,
+                           session_store: str | None = None) -> dict:
+    """Parse the opencode --format json stream and audit every tool_use name.
+
+    Documented event shapes (verified on 1.18.29): NDJSON lines with a top-level
+    {type, timestamp, sessionID}; "text" events carry growing text deltas in
+    part.text, so the final message is the in-order concatenation of the deltas;
+    "tool_use" events carry part.tool with the tool name; "step_finish" closes a
+    step with part.tokens/part.cost; an "error" event means the run failed. A
+    failed turn exits non-zero, and a non-interactive run auto-rejects permission
+    asks (fail closed) unless --auto was passed.
+    """
+    stdout = (run_dir / "stdout.txt").read_text(encoding="utf-8", errors="replace")
+    try:
+        events = [json.loads(line) for line in stdout.splitlines() if line.strip()]
+    except json.JSONDecodeError as exc:
+        raise RunError("opencode json stream contains a non-JSON line.") from exc
+    if any(not isinstance(e, dict) for e in events):
+        raise RunError("opencode json stream contains a non-object event.")
+    if any(e.get("type") == "error" for e in events):
+        raise RunError("opencode reported an error event; inspect the captured diagnostics.")
+    sessions = {e.get("sessionID") for e in events if e.get("sessionID")}
+    if len(sessions) != 1:
+        raise RunError("Missing or ambiguous opencode session id.")
+    session = sessions.pop()
+    steps = [e for e in events if e.get("type") == "step_finish"]
+    if not steps:
+        raise RunError("opencode reported no completed step; inspect the captured diagnostics.")
+    denied: list[str] = []
+    tool_calls: dict[str, int] = {}
+    final_text = ""
+    for event in events:
+        if event.get("type") == "tool_use":
+            part = event.get("part") or {}
+            name = str(part.get("tool", "")).lower()
+            if name:
+                tool_calls[name] = tool_calls.get(name, 0) + 1
+            if mode != "build" and name in OPENCODE_DENIED_TOOLS:
+                denied.append(name)
+        elif event.get("type") == "text":
+            part = event.get("part") or {}
+            if isinstance(part.get("text"), str):
+                final_text += part["text"]
+    last = steps[-1].get("part") or {}
+    tokens = last.get("tokens")
+    cost = last.get("cost")
+    partial = {"session_id": session, "tool_calls": tool_calls,
+               "usage": {"tokens": tokens, "cost": cost} if tokens or cost else None,
+               "observed_models": [],
+               "session_note": "opencode exposes the session id on every event but no observed model field."}
+    if denied:
+        partial["tool_denials"] = sorted(set(denied))
+        raise OpenCodeParseError("opencode called tools the review boundary excludes: "
+                                 + ", ".join(sorted(set(denied))) + ". Refusing the run.", partial)
+    if not final_text.strip():
+        raise OpenCodeParseError("opencode returned no assistant text.", partial)
+    if mode != "build":
+        try:
+            value = validate_review(parse_kimi_json(final_text))
+        except RunError as exc:
+            raise OpenCodeParseError(f"The opencode review is not valid: {exc}", partial) from exc
+    else:
+        value = final_text
+    if expected_session and session != expected_session:
+        raise OpenCodeParseError("opencode continued a different session; refusing its result.", partial)
+    return {"response": value, **partial}
+
+
 # Boundary profiles: a provider enters the loop only with an explicit profile
 # pinning how the runner launches it (read-only review vs build), how its
 # stream is parsed and audited, and its resume semantics. There is no implicit
@@ -880,6 +995,21 @@ PROFILES: dict[str, dict] = {
         "command": _qwen_command,
         "parse": _parse_qwen_result,
         "info": _qwen_info,
+    },
+    "opencode": {
+        # opencode (SST), MIT. Headless surface verified on 1.18.29; older CLIs
+        # are refused instead of guessing flag compatibility.
+        "executable": "opencode",
+        "npm_entry": "opencode-ai/bin/opencode.exe",  # bun-compiled native launcher in the npm package
+        "supports_resume": True,   # --session <ses_...> continuation
+        "session_is_uuid": False,  # opencode session ids are ses_-prefixed names, not UUIDs
+        "prompt_via_file": False,  # run reads the prompt from stdin
+        "root_note": False,
+        "path_audit": False,       # tool names are audited; per-call paths are future hardening
+        "min_version": (1, 18, 0),
+        "command": _opencode_command,
+        "parse": _parse_opencode_result,
+        "info": _opencode_info,
     },
 }
 

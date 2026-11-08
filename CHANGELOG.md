@@ -2,6 +2,12 @@
 
 This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- OpenCode (`opencode`) as a sixth registered provider: `plan` agent boundary for review/inspect (permission asks auto-reject headless) plus a `tool_use` deny-list audit of the `--format json` stream, `build` agent with the CLI's `--auto` for builds, `--session` resume and `--variant` effort pass-through. The runner requires opencode 1.18.0 or newer.
+- `install.py --host opencode` targeting `~/.config/opencode/skills`.
+
 ## [0.9.0] - 2026-10-19
 
 First public release.

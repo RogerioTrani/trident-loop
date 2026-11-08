@@ -31,6 +31,10 @@ HOSTS = {
     # use --dir if your build uses a different skills directory.
     "kimi": ("~/.kimi-code/skills", False),
     "qwen": ("~/.qwen/skills", False),
+    # opencode also discovers ~/.claude/skills and ~/.agents/skills (and
+    # .opencode/skills per project); ~/.config/opencode/skills is its native
+    # global location.
+    "opencode": ("~/.config/opencode/skills", False),
 }
 
 
