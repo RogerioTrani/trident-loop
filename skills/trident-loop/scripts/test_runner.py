@@ -614,7 +614,9 @@ class KimiPathScopeTests(KimiHarness):
         code, record, err = self.run_cli("review", "--host", "codex", "--provider", "kimi")
         self.assertEqual(code, 0, err)
         prompt = Path(record["artifacts"], "prompt.txt").read_text(encoding="utf-8")
-        self.assertIn(f"REPO ROOT (absolute): {self.repo}", prompt)
+        # The runner resolves the repo before writing the root note (tmp dirs may
+        # be symlinked or use 8.3 short names on CI runners).
+        self.assertIn(f"REPO ROOT (absolute): {self.repo.resolve()}", prompt)
 
     def test_plan_file_is_allowed_but_its_folder_is_not(self):
         scratch = self.tmp / "scratch"
