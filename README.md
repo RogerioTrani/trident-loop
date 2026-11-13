@@ -114,6 +114,36 @@ The host stops to ask at each role decision: the first reviewer, a reviewer swap
 
 The runner accepts a review only when the CLI turn completed and the output parses as a structured review with a verdict, findings backed by evidence, coverage and limitations. An empty output file or a session-start event does not count. The approval stores the plan's SHA256, so any later edit to the plan voids it. A `BLOCKED` verdict, a failed process or an exhausted round budget is reported to you and never turned into an approval. A review with zero findings is valid, but it does not prove the plan is correct.
 
+## FAQ
+
+### How do I get a second AI to review my Claude Code or Codex plan?
+
+Install trident-loop in the CLI you plan with, install and sign in to at least one other supported CLI, and ask for "trident this feature" or "trident this plan". The first provider in the pipeline that is not your host reviews the plan, so a plan written in Claude Code goes to Codex by default. Pass `reviewer=` to pick another one.
+
+### How many CLIs do I need?
+
+Two. The reviewer must be a different provider from the host, and the inspector must be a different provider from the builder. With only Claude Code and Codex installed, for example, Claude plans and builds while Codex reviews and inspects.
+
+### Does it call any API or need API keys?
+
+No. The runner starts the CLIs you already have installed and each one uses its own sign-in. trident-loop never reads or stores keys. Every review, build and inspection runs on your accounts, so it spends the quota or credits of each provider you delegate to.
+
+### Can I use it on a plan I already wrote?
+
+Yes. `mode=review` loads your plan, asks only about material gaps and goes straight to review, for example `trident this plan, mode=review, plan=docs/migration.md`.
+
+### How is trident-loop different from claudex-loop?
+
+[claudex-loop](https://github.com/chaseai-yt/claudex-loop) runs the same plan, review, build and inspect loop with two providers, Claude and Codex. trident-loop keeps that loop and adds a provider registry with a permission boundary per CLI, so Kimi Code, DeepSeek Harness, qwen-code and OpenCode can also plan, review, build or inspect.
+
+### Is build mode safe?
+
+Review and inspection are read-only. Build mode lets the builder edit files and run commands without asking each time, inside whatever boundary its CLI offers, and Qwen has no filesystem sandbox at all. Build in a repository you can reset, with no production credentials in the environment. Details are in [SECURITY.md](SECURITY.md).
+
+### Which providers have been tested against the real CLI?
+
+Claude Code and Codex were live-tested in the upstream baseline. For Kimi Code and OpenCode the CLI surface was checked against the installed binary, but no full review has run yet. DeepSeek Harness and qwen-code have not been live-tested. The automated tests cover all six with fake CLIs. The "Live verification" column above and `references/runtime.md` have the details.
+
 ## Development
 
 ```
