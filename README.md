@@ -43,7 +43,15 @@ The runner registers each provider with an explicit boundary profile, and an unk
 
 ## Install
 
-The same checkout installs into each CLI through that CLI's own plugin mechanism.
+The quickest route is the [`skills` CLI](https://github.com/vercel-labs/skills). It detects which agents are installed and puts the skill in each one's global skills directory:
+
+```
+npx skills add RogerioTrani/trident-loop -g
+```
+
+Add `@v0.11.0` after the repository name to pin a release, `-a claude-code codex` to choose the agents yourself, and `--copy` for copies instead of symlinks. `npx skills update -g` updates the skill later, and `npx skills remove trident-loop -g` removes it. Set `DISABLE_TELEMETRY=1` to turn off the CLI's anonymous usage data. It covers Claude Code, Codex, Kimi Code, OpenCode and qwen-code, but not DeepSeek Harness (see below). It can also put the skill in agents that are not trident-loop providers, such as Pi. The runner refuses those as `--host`, so run the loop from one of the six providers. It needs Node.js. The install routes below need only Python or the agent's own plugin system.
+
+The same checkout also installs into each CLI through that CLI's own plugin mechanism.
 
 Claude Code, through the plugin marketplace:
 
