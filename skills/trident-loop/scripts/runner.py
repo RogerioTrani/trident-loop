@@ -44,6 +44,12 @@ QWEN_DENIED_TOOLS = ("shell", "write", "edit", "web_fetch", "webfetch", "web_sea
 # this deny list, so a weakened agent config is a refused run, not a silent escape.
 OPENCODE_DENIED_TOOLS = ("bash", "write", "edit", "patch", "webfetch",
                          "task", "kill", "skill")
+# opencode-paste review/inspect: for OpenCode setups whose "plan" agent still
+# reaches for bash or file reads. The plan and diff are pasted into the prompt,
+# nothing is attached, the CLI runs in an empty temporary directory, and the
+# reply must be the JSON review alone. OPENCODE_CONFIG_CONTENT permission denies
+# are not relied on: they were observed not to stop a tool call.
+OPENCODE_PASTE_MODEL = "opencode/beam-free"
 REVIEW_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -128,7 +134,9 @@ def cli_prefix(provider: str, override: str | None = None) -> list[str]:
     """Avoid cmd.exe command-string quoting when a Windows npm shim is on PATH."""
     if override and (not Path(override).is_absolute() or not Path(override).is_file()):
         raise RunError("--cli must be an absolute path to an installed CLI executable.")
-    executable = override or shutil.which(provider_profile(provider).get("executable", provider))
+    default_cli = provider_profile(provider).get("default_cli")
+    executable = override or (default_cli and default_cli()) or shutil.which(
+        provider_profile(provider).get("executable", provider))
     if not executable:
         raise RunError(f"{provider} is not on PATH. Install and authenticate its CLI first.")
     path = Path(executable)
@@ -449,7 +457,7 @@ def _claude_command(mode: str, run_dir: Path, model=None, effort=None, session=N
     return args
 
 
-def execute(argv: list[str], prompt: str, repo: Path, run_dir: Path, timeout: int,
+def execute(argv: list[str], prompt: str, cwd: Path, run_dir: Path, timeout: int,
             extra_env: dict | None = None) -> int:
     """Keep diagnostics and terminate the process tree on timeout/interruption.
 
@@ -461,7 +469,7 @@ def execute(argv: list[str], prompt: str, repo: Path, run_dir: Path, timeout: in
         options = {"start_new_session": True} if os.name != "nt" else {
             "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
         env = {**os.environ, **extra_env} if extra_env else None
-        with subprocess.Popen(argv, cwd=repo, stdin=subprocess.PIPE, stdout=out, stderr=err,
+        with subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=out, stderr=err,
                               env=env, **options) as proc:
             try:
                 proc.communicate(prompt.encode("utf-8"), timeout=timeout)
@@ -928,6 +936,52 @@ def _parse_opencode_result(mode: str, run_dir: Path, expected_session=None,
     return {"response": value, **partial}
 
 
+def _opencode_desktop_cli() -> str | None:
+    """The OpenCode Desktop CLI on Windows, which carries the Desktop login; None elsewhere."""
+    local = os.environ.get("LOCALAPPDATA")
+    if os.name != "nt" or not local:
+        return None
+    path = Path(local) / "Programs" / "ai.opencode.desktop" / "resources" / "opencode-cli.exe"
+    return str(path) if path.is_file() else None
+
+
+def _opencode_paste_info(mode: str) -> dict:
+    return {"paste_only": True, "attachments": [], "cwd": "empty temporary directory",
+            "default_model": OPENCODE_PASTE_MODEL}
+
+
+def _opencode_paste_command(mode: str, run_dir: Path, model=None, effort=None, session=None) -> list:
+    # Surface tested with the OpenCode Desktop CLI (v2.3.0): `run -m <model>` with
+    # the whole prompt on stdin and plain-text output. No --agent, --format or
+    # --file: nothing but the pasted prompt reaches the model.
+    if effort:
+        raise RunError("opencode-paste has no separate effort flag. Put the variant in --model "
+                       "as provider/model#variant.")
+    return ["run", "-m", model or OPENCODE_PASTE_MODEL]
+
+
+def _parse_opencode_paste_result(mode: str, run_dir: Path, expected_session=None,
+                                 repo: str = "", roots: list[str] | None = None,
+                                 session_store: str | None = None) -> dict:
+    """Accept only the JSON review: bare, or as the single fenced block and nothing else.
+
+    Plain-text output has no tool events to audit, so any other text on stdout
+    (a tool trace, prose, a request to read a file) refuses the run.
+    """
+    text = (run_dir / "stdout.txt").read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        raise RunError("opencode-paste returned no text.")
+    if not (text.startswith("{") or KIMI_FENCE.fullmatch(text)):
+        raise RunError("opencode-paste output must be the JSON review alone; it contains other "
+                       "text (prose or a tool trace). Refusing the run.")
+    try:
+        value = validate_review(parse_kimi_json(text))
+    except RunError as exc:
+        raise RunError(f"The opencode-paste review is not valid: {exc}") from exc
+    return {"response": value, "session_id": None, "usage": None, "observed_models": [],
+            "session_note": "Plain-text output exposes no session id, usage or model identity."}
+
+
 # Boundary profiles: a provider enters the loop only with an explicit profile
 # pinning how the runner launches it (read-only review vs build), how its
 # stream is parsed and audited, and its resume semantics. There is no implicit
@@ -1011,6 +1065,22 @@ PROFILES: dict[str, dict] = {
         "parse": _parse_opencode_result,
         "info": _opencode_info,
     },
+    "opencode-paste": {
+        # opencode without tools or disk: the prompt carries the plan and diff,
+        # the CLI runs in an empty temporary directory. Review and inspection only.
+        "executable": "opencode",
+        "default_cli": _opencode_desktop_cli,  # Windows: the Desktop CLI, which holds the login
+        "npm_entry": None,
+        "modes": ("review", "inspect"),
+        "supports_resume": False,  # no session id in text output; the prior review is pasted instead
+        "prompt_via_file": False,
+        "paste_only": True,
+        "root_note": False,
+        "path_audit": False,
+        "command": _opencode_paste_command,
+        "parse": _parse_opencode_paste_result,
+        "info": _opencode_paste_info,
+    },
 }
 
 
@@ -1057,6 +1127,8 @@ def run(args) -> int:
         check_approval(json.loads(Path(args.approval).read_text(encoding="utf-8")), plan, repo)
         print("Approval matches the current plan.")
         return 0
+    if profile.get("modes") and args.mode not in profile["modes"]:
+        raise RunError(f"{provider} supports only: {', '.join(profile['modes'])}.")
     if args.mode == "inspect" and (not args.base or args.resume):
         raise RunError("Inspection requires --base and a fresh session (no --resume).")
     kimi_info = (profile["preflight"](args.model, args.effort, args.mode,
@@ -1122,11 +1194,19 @@ def run(args) -> int:
     # Providers that resolve absolute paths literally are told the root; the others are unchanged.
     root_note = (f"REPO ROOT (absolute): {repo}. Read and search only under this root; "
                  "relative paths resolve here.\n") if profile["root_note"] else ""
+    if profile.get("paste_only"):
+        instructions = instructions.replace(
+            "Read the plan and relevant repository files. ",
+            "You have no tools and no file access. Everything you may use is pasted below: "
+            "the plan and, for an inspection, the change manifest and diff. Do not ask to read "
+            "files or run commands; report what the pasted text does not show as limitations. ")
+        root_note = ("Reply with one JSON object matching this schema and no other text:\n"
+                     + json.dumps(REVIEW_SCHEMA, separators=(",", ":")) + "\n")
     prompt = instructions + root_note + f"\nPLAN PATH: {plan}\nPLAN SHA256: {record['plan_sha256']}\n"
     prompt += "<plan>\n" + plan_body.decode("utf-8-sig") + "\n</plan>\n"
     if previous:
         prompt += "Check prior findings against this revision; do not relitigate resolved items without new evidence.\n"
-    if previous and profile["prompt_via_file"]:
+    if previous and not profile["supports_resume"]:
         # No native resume under the boundary, so the prior output is carried forward.
         prompt += ("PRIOR RESPONSE FROM THE PREVIOUS INDEPENDENT SESSION:\n"
                    + json.dumps(previous["response"], ensure_ascii=False) + "\n")
@@ -1134,7 +1214,9 @@ def run(args) -> int:
     if before:
         save(run_dir / "snapshot.json", before)
         diff = git(repo, "diff", "--no-ext-diff", "--no-textconv", before["base"], "--").decode("utf-8", errors="replace")
-        prompt += "\nCHANGE MANIFEST (read every added/changed file; deleted files are in diff):\n"
+        prompt += ("\nCHANGE MANIFEST (file contents are not attached; judge from the diff):\n"
+                   if profile.get("paste_only") else
+                   "\nCHANGE MANIFEST (read every added/changed file; deleted files are in diff):\n")
         prompt += json.dumps(before, ensure_ascii=False)
     feedback = ""
     if args.feedback:
@@ -1167,9 +1249,17 @@ def run(args) -> int:
         save(run_dir / "command.json", argv)
         print(json.dumps({"provider": provider, "model": args.model or "CLI default (unresolved)",
                           "mode": args.mode, "artifacts": str(run_dir)}), flush=True)
-        # Prompt-file providers read the prompt from disk, so stdin is closed empty.
-        code = execute(argv, "" if profile["prompt_via_file"] else prompt, repo, run_dir,
-                       args.timeout, run_env or None)
+        # Paste-only providers run in an empty directory, so the repo is not their cwd.
+        cwd = Path(tempfile.mkdtemp(prefix="trident-empty-")) if profile.get("paste_only") else repo
+        try:
+            # Prompt-file providers read the prompt from disk, so stdin is closed empty.
+            code = execute(argv, "" if profile["prompt_via_file"] else prompt, cwd, run_dir,
+                           args.timeout, run_env or None)
+            if cwd != repo and any(cwd.iterdir()):
+                raise RunError(f"{provider} wrote into its empty working directory; refusing the run.")
+        finally:
+            if cwd != repo:
+                shutil.rmtree(cwd, ignore_errors=True)
         record["exit_code"] = code
         if code:
             raise RunError(f"{provider} exited {code}; inspect stdout.txt and stderr.txt.")

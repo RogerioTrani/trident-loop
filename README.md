@@ -32,7 +32,8 @@ Each model family has its own blind spots, and a review only counts when the rev
 | Kimi | `kimi` | yes | yes | yes | agent-file allowlist + audited stream + path scope | CLI verified; review path not live-tested |
 | DeepSeek | `dsh` | best-effort¹ | yes | yes | `DSH_PERMISSION_MODE=read-only` sandbox preset | Not live-tested |
 | Qwen | `qwen` | yes | yes | yes | `--safe-mode` + `--exclude-tools` + audited stream | Not live-tested |
-| OpenCode | `opencode` | yes | yes | yes | `plan` agent (asks auto-reject) + audited stream | CLI verified; review path not live-tested |
+| OpenCode | `opencode` | yes | yes | yes | `plan` agent + audited stream | Live runs refused by the audit (tool calls); no completed review |
+| OpenCode paste-only | `opencode-paste` | no | yes | no | prompt-only: plan and diff pasted, empty cwd, JSON-only reply | One live plan review (Desktop CLI, beam-free, Windows) |
 
 ¹ dsh has no native skill directory. To host the loop there, point an `AGENTS.md` at the skill (see below); otherwise use DeepSeek only as reviewer, builder or inspector.
 
@@ -142,7 +143,7 @@ Review and inspection are read-only. Build mode lets the builder edit files and 
 
 ### Which providers have been tested against the real CLI?
 
-Claude Code and Codex were live-tested in the upstream baseline. For Kimi Code and OpenCode the CLI surface was checked against the installed binary, but no full review has run yet. DeepSeek Harness and qwen-code have not been live-tested. The automated tests cover all six with fake CLIs. The "Live verification" column above and `references/runtime.md` have the details.
+Claude Code and Codex were live-tested in the upstream baseline. For Kimi Code the CLI surface was checked against the installed binary, but no full review has run yet. OpenCode ran two live plan reviews under its `plan` agent. The model called `bash` and read files in both, and the runner refused both runs, so no OpenCode review has completed on that path. The paste-only profile, `opencode-paste`, completed one live plan review on a throwaway plan with the OpenCode Desktop CLI and the free `opencode/beam-free` model on Windows. Its inspection path has not run live. DeepSeek Harness and qwen-code have not been live-tested. The automated tests cover every profile with fake CLIs. The "Live verification" column above and `references/runtime.md` have the details.
 
 ## Development
 

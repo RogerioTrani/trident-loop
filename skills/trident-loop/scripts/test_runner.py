@@ -16,6 +16,8 @@ from unittest import mock
 
 import runner
 
+ORIGINAL_CLI_PREFIX = runner.cli_prefix
+
 FAKE_KIMI = r'''
 import json, os, sys
 from pathlib import Path
@@ -316,6 +318,44 @@ elif mode == "no_step":
 elif mode == "not_json":
     print("this is not json")
     sys.exit(0)
+else:
+    raise SystemExit("unknown fake mode " + mode)
+'''
+
+
+FAKE_OPENCODE_PASTE = r'''
+import json, os, sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "--version" in args:
+    print("opencode v2.3.0")
+    sys.exit(0)
+
+Path(os.environ["FAKE_PASTE_OUT"]).write_text(json.dumps({
+    "args": args, "cwd": os.getcwd(), "cwd_entries": os.listdir("."),
+    "prompt": sys.stdin.read()}), encoding="utf-8")
+
+mode = os.environ.get("FAKE_PASTE_MODE", "ok_review")
+REVIEW = json.dumps({"verdict": "APPROVED", "summary": "ok", "findings": [],
+                     "coverage": ["pasted plan"], "limitations": []})
+if mode == "ok_review":
+    print(REVIEW)
+elif mode == "ok_fenced":
+    print("```json\n" + REVIEW + "\n```")
+elif mode == "tool_trace":
+    # A model that still reaches for tools: the trace lands on stdout before the answer.
+    print("|  Read     PLAN.md")
+    print(REVIEW)
+elif mode == "asks_to_read":
+    print("I need to read src/app.py before I can review this plan.")
+elif mode == "prose_around":
+    print("Here is my review:\n```json\n" + REVIEW + "\n```")
+elif mode == "not_json":
+    print("{verdict: APPROVED")
+elif mode == "writes_cwd":
+    Path("notes.txt").write_text("x", encoding="utf-8")
+    print(REVIEW)
 else:
     raise SystemExit("unknown fake mode " + mode)
 '''
@@ -1113,6 +1153,138 @@ class OpenCodeBuildTests(OpenCodeHarness):
         self.assertIn("--auto", argv)
         self.assertIn("edit", record["tool_calls"], "builds are supposed to write")
         self.assertIn("Report:", record["response"])
+
+
+class OpenCodePasteTests(unittest.TestCase):
+    """opencode-paste: prompt carries everything, cwd is empty, reply must be the JSON review alone."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="trident-tests-"))
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        (self.repo / "PLAN.md").write_text(PLAN, encoding="utf-8")
+        self.fake = self.tmp / "fake_opencode_paste.py"
+        self.fake.write_text(FAKE_OPENCODE_PASTE, encoding="utf-8")
+        self.seen = self.tmp / "seen.json"
+        self.artifacts = self.tmp / "artifacts"
+        env = mock.patch.dict(os.environ, {"FAKE_PASTE_OUT": str(self.seen)})
+        env.start()
+        self.addCleanup(env.stop)
+        patcher = mock.patch.object(runner, "cli_prefix",
+                                    lambda provider, override=None: [sys.executable, str(self.fake)])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_cli(self, *extra: str, mode: str = "ok_review"):
+        os.environ["FAKE_PASTE_MODE"] = mode
+        argv = [*extra, "--repo", str(self.repo), "--plan", "PLAN.md",
+                "--artifacts", str(self.artifacts)]
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = runner.main(argv)
+        text = out.getvalue()
+        if "\n{\n" in text:
+            record = json.loads("{\n" + text.split("\n{\n")[-1])  # launch notice + record
+        elif text.strip().startswith("{"):
+            record = json.loads(text)  # failure before launch: record only
+        else:
+            record = None
+        return code, record, err.getvalue()
+
+    def review(self, mode="ok_review", *extra):
+        return self.run_cli("review", "--host", "claude", "--provider", "opencode-paste", *extra,
+                            mode=mode)
+
+    def seen_run(self) -> dict:
+        return json.loads(self.seen.read_text(encoding="utf-8"))
+
+    def test_review_pastes_the_plan_into_an_empty_cwd(self):
+        code, record, err = self.review()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(record["response"]["verdict"], "APPROVED")
+        self.assertTrue(record["opencode-paste"]["paste_only"])
+        seen = self.seen_run()
+        self.assertEqual(seen["args"], ["run", "-m", "opencode/beam-free"])
+        self.assertEqual(seen["cwd_entries"], [], "the CLI must start in an empty directory")
+        self.assertNotEqual(Path(seen["cwd"]).resolve(), self.repo.resolve())
+        self.assertFalse(Path(seen["cwd"]).exists(), "the empty directory is removed after the run")
+        self.assertIn("Goal: say hello.", seen["prompt"], "the plan body is pasted, not referenced")
+        self.assertIn("You have no tools and no file access", seen["prompt"])
+        self.assertIn('"verdict"', seen["prompt"], "the schema is pasted for a text-only reply")
+        self.assertNotIn("Read the plan and relevant repository files", seen["prompt"])
+
+    def test_model_override_and_fenced_reply(self):
+        code, record, err = self.review("ok_fenced", "--model", "opencode/other-model")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.seen_run()["args"], ["run", "-m", "opencode/other-model"])
+
+    def test_tool_trace_on_stdout_is_refused(self):
+        code, record, err = self.review("tool_trace")
+        self.assertEqual(code, 1)
+        self.assertIn("JSON review alone", record["error"])
+        self.assertNotIn("response", record)
+
+    def test_request_to_read_files_is_refused(self):
+        code, record, err = self.review("asks_to_read")
+        self.assertEqual(code, 1)
+        self.assertIn("JSON review alone", record["error"])
+
+    def test_prose_around_the_block_is_refused(self):
+        code, record, err = self.review("prose_around")
+        self.assertEqual(code, 1)
+        self.assertIn("JSON review alone", record["error"])
+
+    def test_invalid_json_is_refused(self):
+        code, record, err = self.review("not_json")
+        self.assertEqual(code, 1)
+        self.assertIn("not valid", record["error"])
+
+    def test_write_into_empty_cwd_is_refused(self):
+        code, record, err = self.review("writes_cwd")
+        self.assertEqual(code, 1)
+        self.assertIn("empty working directory", record["error"])
+        self.assertNotIn("response", record)
+
+    def test_effort_flag_is_refused(self):
+        code, record, err = self.review("ok_review", "--effort", "high")
+        self.assertEqual(code, 1)
+        self.assertIn("provider/model#variant", record["error"])
+
+    def test_build_mode_is_refused_before_launch(self):
+        code, record, err = self.run_cli("build", "--host", "claude", "--builder", "opencode-paste",
+                                         "--unreviewed-spec", "--proof", "echo ok")
+        self.assertEqual(code, 1)
+        self.assertIn("supports only", err)
+        self.assertFalse(self.seen.exists())
+
+    def test_inspect_pastes_the_diff(self):
+        import subprocess
+        for cmd in (["git", "init", "-q"], ["git", "add", "."],
+                    ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]):
+            subprocess.run(cmd, cwd=self.repo, check=True, capture_output=True)
+        (self.repo / "PLAN.md").write_text(PLAN + "\nchanged line\n", encoding="utf-8")
+        code, record, err = self.run_cli("inspect", "--host", "claude", "--builder", "claude",
+                                         "--provider", "opencode-paste", "--base", "HEAD")
+        self.assertEqual(code, 0, err)
+        prompt = self.seen_run()["prompt"]
+        self.assertIn("+changed line", prompt)
+        self.assertIn("file contents are not attached", prompt)
+
+    def test_resume_pastes_the_prior_review(self):
+        code, first, err = self.review()
+        self.assertEqual(code, 0, err)
+        prior = self.tmp / "prior.json"
+        prior.write_text(json.dumps(first), encoding="utf-8")
+        code, second, err = self.review("ok_review", "--resume", str(prior))
+        self.assertEqual(code, 0, err)
+        self.assertIn("PRIOR RESPONSE FROM THE PREVIOUS INDEPENDENT SESSION", self.seen_run()["prompt"])
+
+    def test_default_cli_is_the_desktop_binary_when_present(self):
+        exe = self.tmp / "opencode-cli.exe"
+        exe.write_text("", encoding="utf-8")
+        with mock.patch.dict(runner.PROFILES["opencode-paste"], {"default_cli": lambda: str(exe)}):
+            self.assertEqual(ORIGINAL_CLI_PREFIX("opencode-paste"), [str(exe)])
+            self.assertEqual(ORIGINAL_CLI_PREFIX("opencode-paste", str(self.fake)), [str(self.fake)])
 
 
 class CliPrefixTests(unittest.TestCase):
